@@ -66,7 +66,10 @@ The destination directory is created automatically if it does not exist.
   volume from silently turning the backup into a no-op.
 - A pattern that matches a volume which `--exclude` then removes is *not* an error.
 - If a backup fails, the stopped projects are still restarted (the restart runs in a
-  `finally` block) and the script exits with code 1.
+  `finally` block) and the script exits with code 1. The same applies to `SIGTERM`
+  (`systemctl stop`, host shutdown, `kill`).
+- Archives are written as `*.tar.gz.part` and renamed only on success, so a failed or
+  partial archive never appears under its final name.
 - Archives are owned by UID/GID `1000:1000`.
 
 ## Tests

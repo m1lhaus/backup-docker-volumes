@@ -203,6 +203,28 @@ class MainTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertTrue(out.is_dir())
 
+    def test_stop_failure_still_restarts_project(self) -> None:
+        """A failing stop still restarts the project."""
+        containers = [make_container("c1", "vol1", project="p1", service="s1")]
+        calls: list[list[str]] = []
+
+        def fake_run(cmd: list[str], *, capture: bool = False) -> str:
+            calls.append(cmd)
+            if "stop" in cmd:
+                raise RuntimeError("stop boom")
+            return ""
+
+        with (
+            mock.patch.object(bdv, "discover", return_value=(["vol1"], containers)),
+            mock.patch.object(bdv, "run", side_effect=fake_run),
+            mock.patch.object(bdv, "backup_volume", return_value="vol1__ts.tar.gz"),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            with self.assertRaises(RuntimeError):
+                bdv.main([tmp])
+
+        self.assertTrue(any("up" in cmd for cmd in calls), "project was not restarted after failed stop")
+
     def test_restart_failure_is_reported(self) -> None:
         """A failing restart is reported and the run exits 1."""
         containers = [make_container("c1", "vol1", project="p1", service="s1")]

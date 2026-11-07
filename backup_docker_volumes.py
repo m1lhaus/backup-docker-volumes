@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import signal
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -84,7 +85,7 @@ def plan(
     include = include or []
     exclude = exclude or []
     for pattern in include:
-        if not any(fnmatch.fnmatchcase(volume, pattern) for volume in volumes):
+        if not any(matches(volume, [pattern]) for volume in volumes):
             raise NoMatchingVolumeError(f"--include pattern '{pattern}' matched no volume")
     volume_to_containers_map: dict[str, list[dict]] = {v: [] for v in volumes}
     for container in containers:
@@ -130,7 +131,9 @@ def backup_volume(volume: str, backup_dir: Path, timestamp: str) -> str:
             "-v", f"{backup_dir}:/backup",
             "alpine",
             "sh", "-c",
-            f"tar czf '/backup/{archive}' -C /volume-data . && chown 1000:1000 '/backup/{archive}'",
+            f"tar czf '/backup/{archive}.part' -C /volume-data ."
+            f" && chown 1000:1000 '/backup/{archive}.part'"
+            f" && mv '/backup/{archive}.part' '/backup/{archive}'",
         ]
     )
     return archive
@@ -138,7 +141,8 @@ def backup_volume(volume: str, backup_dir: Path, timestamp: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     global VERBOSE
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0]) # type: ignore
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])  # type: ignore
     parser.add_argument("backup_dir", type=Path, help="destination directory for the archives")
     parser.add_argument("--dry-run", action="store_true", help="print the plan and exit")
     parser.add_argument("--verbose", "-v", action="store_true", help="echo every docker command")
@@ -157,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
     volumes, containers = discover()
     try:
         targets, projects = plan(volumes, containers, args.include, args.exclude)
-    except NoMatchingVolumeError as exc:
+    except (NoMatchingVolumeError, ComposeProjectNotFoundError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
@@ -177,9 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     stopped: list[Project] = []
     try:
         for project in projects.values():
+            stopped.append(project)  # restart it even if stopping fails partway
             print(f"==> Stopping {project.name}...")
             run(project.compose("stop"))
-            stopped.append(project)
 
         for volume in targets:
             print(f"==> Backing up {volume}...")
