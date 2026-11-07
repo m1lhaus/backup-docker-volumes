@@ -43,6 +43,7 @@ The destination directory is created automatically if it does not exist.
 |---|---|
 | `--include PATTERN` | Only back up volumes matching this `fnmatch` pattern. Repeatable. |
 | `--exclude PATTERN` | Skip volumes matching this `fnmatch` pattern. Repeatable. `--exclude` wins over `--include`. |
+| `--partial-stop` | Stop only the services that mount a selected volume, not the whole compose project. |
 | `--dry-run` | Print the plan and exit without touching anything. |
 | `--verbose`, `-v` | Echo every Docker command before running it. |
 
@@ -57,7 +58,22 @@ The destination directory is created automatically if it does not exist.
 
 # preview what would happen
 ./backup_docker_volumes.py /mnt/backups/docker --include='windmill*' --dry-run
+
+# stop only the services that actually mount the selected volumes
+./backup_docker_volumes.py /mnt/backups/docker --include='windmill*' --partial-stop
 ```
+
+### Stopping scope
+
+By default a whole compose project is stopped, because `docker compose stop` without
+service names stops every service in the project. With `--partial-stop` only the services
+that mount a selected volume are stopped and restarted; the rest keep running. Either way
+the restart uses `docker compose up -d --no-recreate <services>`, so compose still applies
+the `depends_on` order from the compose file.
+
+Services that share a network namespace (`network_mode: service:<sidecar>`) are fine as
+long as the sidecar itself is not stopped: the restarted service joins the still-running
+namespace and keeps its address. Only stopping the sidecar takes its dependants down.
 
 ## Safety behaviour
 

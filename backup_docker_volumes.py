@@ -75,12 +75,16 @@ def plan(
     containers: list[dict],
     include: list[str] | None = None,
     exclude: list[str] | None = None,
+    partial_stop: bool = False,
 ) -> tuple[list[str], dict[str, Project]]:
     """Return the volumes to archive and the compose projects that must stop.
 
     `include`/`exclude` are fnmatch patterns; an empty `include` means "all".
     Raises NoMatchingVolumeError when an `include` pattern matches no volume,
     so a renamed volume cannot silently turn the backup into a no-op.
+
+    With `partial_stop` only the services that mount a selected volume are
+    stopped and restarted; otherwise the whole project is.
     """
     include = include or []
     exclude = exclude or []
@@ -107,18 +111,22 @@ def plan(
             labels = container["Config"].get("Labels") or {}
             try:
                 project = Project(labels[LABEL_PROJECT], labels[LABEL_WORKDIR], labels[LABEL_CONFIG])
+                service = labels[LABEL_SERVICE]
             except KeyError as exc:
                 raise ComposeProjectNotFoundError(
                     f"container '{container['Name'].lstrip('/')}' has no compose label {exc}"
                 ) from None
-            projects.setdefault(project.name, project)  # reduce duplicates
+            project = projects.setdefault(project.name, project)  # reduce duplicates
+            if partial_stop:
+                project.services.add(service)
 
-    # `compose stop` stops every service in the project, so restart all of them.
-    for container in containers:
-        labels = container["Config"].get("Labels") or {}
-        project = projects.get(labels.get(LABEL_PROJECT, ""))
-        if project and container["State"]["Running"]:
-            project.services.add(labels[LABEL_SERVICE])
+    if not partial_stop:
+        # `compose stop` stops every service in the project, so restart all of them.
+        for container in containers:
+            labels = container["Config"].get("Labels") or {}
+            project = projects.get(labels.get(LABEL_PROJECT, ""))
+            if project and container["State"]["Running"]:
+                project.services.add(labels[LABEL_SERVICE])
     return targets, projects
 
 
@@ -154,13 +162,19 @@ def main(argv: list[str] | None = None) -> int:
         "--exclude", action="append", default=[], metavar="PATTERN",
         help="skip volumes matching this fnmatch pattern (repeatable)",
     )
+    parser.add_argument(
+        "--partial-stop", action="store_true",
+        help="stop only the services that mount a selected volume, not the whole project",
+    )
     args = parser.parse_args(argv)
     VERBOSE = args.verbose
 
     backup_dir = args.backup_dir.expanduser().resolve()
     volumes, containers = discover()
     try:
-        targets, projects = plan(volumes, containers, args.include, args.exclude)
+        targets, projects = plan(
+            volumes, containers, args.include, args.exclude, args.partial_stop
+        )
     except (NoMatchingVolumeError, ComposeProjectNotFoundError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -183,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         for project in projects.values():
             stopped.append(project)  # restart it even if stopping fails partway
             print(f"==> Stopping {project.name}...")
-            run(project.compose("stop"))
+            run(project.compose("stop", *sorted(project.services)))
 
         for volume in targets:
             print(f"==> Backing up {volume}...")

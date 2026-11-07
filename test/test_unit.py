@@ -125,6 +125,24 @@ class PlanTests(unittest.TestCase):
         _, projects = bdv.plan(["vol1"], containers)
         self.assertEqual(projects["p1"].services, {"s1", "watcher"})
 
+    def test_partial_stop_only_targets_services_mounting_a_volume(self) -> None:
+        """--partial-stop leaves services without a selected volume alone."""
+        containers = [
+            make_container("c1", "vol1", project="p1", service="s1"),
+            make_container("watcher", "unrelated", project="p1", service="watcher"),
+        ]
+        _, projects = bdv.plan(["vol1"], containers, partial_stop=True)
+        self.assertEqual(projects["p1"].services, {"s1"})
+
+    def test_partial_stop_ignores_services_of_untargeted_volumes(self) -> None:
+        """--partial-stop only collects services of volumes actually selected."""
+        containers = [
+            make_container("c1", "vol1", project="p1", service="s1"),
+            make_container("c2", "vol2", project="p1", service="s2"),
+        ]
+        _, projects = bdv.plan(["vol1", "vol2"], containers, include=["vol1"], partial_stop=True)
+        self.assertEqual(projects["p1"].services, {"s1"})
+
     def test_missing_compose_labels_raises(self) -> None:
         """A running container without compose labels aborts the run."""
         containers = [make_container("c1", "vol1", labels=False)]
@@ -243,6 +261,34 @@ class MainTests(unittest.TestCase):
             rc = bdv.main([tmp])
 
         self.assertEqual(rc, 1)
+
+    def test_partial_stop_passes_services_to_stop_and_up(self) -> None:
+        """--partial-stop names the affected services in both stop and up."""
+        containers = [
+            make_container("c1", "vol1", project="p1", service="s1"),
+            make_container("watcher", "unrelated", project="p1", service="watcher"),
+        ]
+        calls: list[list[str]] = []
+
+        def fake_run(cmd: list[str], *, capture: bool = False) -> str:
+            calls.append(cmd)
+            return ""
+
+        with (
+            mock.patch.object(bdv, "discover", return_value=(["vol1"], containers)),
+            mock.patch.object(bdv, "run", side_effect=fake_run),
+            mock.patch.object(bdv, "backup_volume", return_value="vol1__ts.tar.gz"),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            rc = bdv.main(["--partial-stop", tmp])
+
+        self.assertEqual(rc, 0)
+        stop_cmd = next(cmd for cmd in calls if "stop" in cmd)
+        up_cmd = next(cmd for cmd in calls if "up" in cmd)
+        self.assertEqual(stop_cmd[-1], "s1")
+        self.assertNotIn("watcher", stop_cmd)
+        self.assertNotIn("watcher", up_cmd)
+        self.assertIn("s1", up_cmd)
 
 
 class RunTests(unittest.TestCase):
