@@ -1,0 +1,13 @@
+# Fixture project with a single named volume.
+# The volume is explicitly named so compose does not prefix it with the project name.
+services:
+  writer:
+    image: alpine
+    container_name: test-compose1-writer
+    command: ["sh", "-c", "echo compose1 > /data/volume.txt && sleep infinity"]
+    volumes:
+      - test_volume_one:/data
+
+volumes:
+  test_volume_one:
+    name: test_volume_one

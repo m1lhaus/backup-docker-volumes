@@ -1,0 +1,21 @@
+# Fixture project with two named volumes, each written by its own service.
+services:
+  writer-a:
+    image: alpine
+    container_name: test-compose2-writer-a
+    command: ["sh", "-c", "echo compose2-a > /data/volume.txt && sleep infinity"]
+    volumes:
+      - test_volume_two_a:/data
+
+  writer-b:
+    image: alpine
+    container_name: test-compose2-writer-b
+    command: ["sh", "-c", "echo compose2-b > /data/volume.txt && sleep infinity"]
+    volumes:
+      - test_volume_two_b:/data
+
+volumes:
+  test_volume_two_a:
+    name: test_volume_two_a
+  test_volume_two_b:
+    name: test_volume_two_b
